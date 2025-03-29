@@ -11,7 +11,9 @@ import seaborn as sns
 from tqdm import tqdm
 import pydicom
 import cv2
-
+from sklearn.metrics import roc_auc_score
+from pydicom import dcmread
+    
 
 def load_dicom(path):
     dicom = pydicom.dcmread(path)
@@ -30,7 +32,7 @@ for folder in os.listdir(ms_folder):
         if file.endswith(".dcm"):
             path = os.path.join(ms_folder, folder, file)
             img = load_dicom(path)
-            ms_images.append(img)  # Append image to list
+            ms_images.append(img)  
 
 healthy_folder = "healthy/ST000001"    
 
@@ -91,53 +93,40 @@ train_dataset, test_dataset = random_split(
     generator=torch.Generator().manual_seed(42)
 )
 
-# Create data loaders
 train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
-# Create model
 class MSClassifier(nn.Module):
     def __init__(self):
         super(MSClassifier, self).__init__()
-        # Load pre-trained ResNet50
-        self.resnet = models.resnet50(pretrained=True)
+        self.resnet = models.resnet18(pretrained=True)  # Use smaller backbone
         
         # Modify first layer to accept 1 channel input
-        self.resnet.conv1 = nn.Conv2d(
-            1, 64, kernel_size=7, stride=2, padding=3, bias=False
-        )
+        self.resnet.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
         
-        # Replace the final layer
+        # Replace the final layer with stronger regularization
         num_features = self.resnet.fc.in_features
         self.resnet.fc = nn.Sequential(
-            nn.Linear(num_features, 512),
+            nn.Linear(num_features, 256),
             nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.BatchNorm1d(256),  # Add batch normalization
+            nn.Dropout(0.6),      # Increase dropout
             nn.Linear(256, 1),
             nn.Sigmoid()
         )
-        
-        # Freeze base layers
-        for param in list(self.resnet.parameters())[:-30]:
-            param.requires_grad = False
             
     def forward(self, x):
         return self.resnet(x)
 
-# Initialize model, loss function, and optimizer
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = MSClassifier().to(device)
+
 criterion = nn.BCELoss()
-optimizer = optim.Adam([
-    {'params': model.resnet.fc.parameters(), 'lr': 1e-3},
-    {'params': model.resnet.layer4.parameters(), 'lr': 1e-4},
-])
+optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=0.01)
+
 
 # Training function
-def train_model(model, criterion, optimizer, train_loader, test_loader, num_epochs=30):
+def train_model(model, criterion, optimizer, train_loader, test_loader, num_epochs=10):
     best_val_auc = 0.0
     train_losses = []
     val_losses = []
@@ -199,7 +188,6 @@ def train_model(model, criterion, optimizer, train_loader, test_loader, num_epoc
         val_accs.append(epoch_val_acc)
         
         # Calculate AUC
-        from sklearn.metrics import roc_auc_score
         val_auc = roc_auc_score(all_labels, all_preds)
         
         print(f"Epoch {epoch+1}/{num_epochs} - "
@@ -213,7 +201,6 @@ def train_model(model, criterion, optimizer, train_loader, test_loader, num_epoc
             torch.save(model.state_dict(), 'best_ms_classifier.pth')
             print(f"Model saved with AUC: {val_auc:.4f}")
     
-    # Load best model
     model.load_state_dict(torch.load('best_ms_classifier.pth'))
     return model, (train_losses, val_losses, train_accs, val_accs)
 
@@ -280,14 +267,11 @@ def plot_history(history):
 
 # Evaluate and plot history
 evaluate_model(model, test_loader)
-plot_history(history)
+# plot_history(history)
 
 # Function to predict on new DICOM images
 def predict_ms(model, image_path):
-    from pydicom import dcmread
-    import cv2
-    
-    # Load and process the image
+
     dicom = dcmread(image_path)
     img = dicom.pixel_array
     img = cv2.resize(img, (224, 224))
@@ -299,7 +283,6 @@ def predict_ms(model, image_path):
     # Apply normalization
     img_tensor = transforms.Normalize(mean=[0.5], std=[0.5])(img_tensor)
     
-    # Make prediction
     model.eval()
     with torch.no_grad():
         output = model(img_tensor.to(device))

@@ -31,28 +31,26 @@ class MSClassifier(nn.Module):
     def forward(self, x):
         return self.resnet(x)
 
-def load_dicom(path):
-    dicom = pydicom.dcmread(path)
-    img = dicom.pixel_array
-    img = cv2.resize(img, (224, 224))
-    img = img / np.max(img)  # Normalize to [0,1]
-    return img
+
+def load_image(path):
+    if path.lower().endswith(('.dcm', '.dicom')):
+        dicom = pydicom.dcmread(path)
+        img = dicom.pixel_array
+        img = cv2.resize(img, (224, 224))
+        img = img / np.max(img) 
+        return img
+    elif path.lower().endswith(('.jpg', '.jpeg', '.png')):
+        # Load JPG/PNG image
+        img = cv2.imread(path, cv2.IMREAD_GRAYSCALE) 
+        img = cv2.resize(img, (224, 224))
+        img = img / 255.0  
+        return img
+    else:
+        raise ValueError(f"Unsupported file format: {path}")
 
 def predict_single_image(model, image_path, device):
     # Load and preprocess image
-    if image_path.endswith('.dcm'):
-        img = load_dicom(image_path)
-    else:
-        img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        img = cv2.resize(img, (224, 224))
-        img = img / 255.0
-    
-    # Display the image
-    plt.figure(figsize=(6, 6))
-    plt.imshow(img, cmap='gray')
-    plt.title(f"MRI Scan: {os.path.basename(image_path)}")
-    plt.axis('off')
-    plt.show()
+    img = load_image(image_path)
     
     # Convert to tensor and normalize
     img_tensor = torch.from_numpy(img).float().unsqueeze(0).unsqueeze(0)  # Add batch and channel dims
@@ -81,7 +79,7 @@ def predict_folder(model, folder_path, device):
     results = []
     for root, _, files in os.walk(folder_path):
         for file in files:
-            if file.endswith(".dcm") or file.endswith(".jpg"):
+            if file.endswith(".dcm") or file.endswith(".jpg") or file.endswith(".jpeg") or file.endswith(".png"):
                 path = os.path.join(root, file)
                 print(f"\nAnalyzing: {path}")
                 probability = predict_single_image(model, path, device)
@@ -101,16 +99,13 @@ def predict_folder(model, folder_path, device):
     
     return results
 
-# Main prediction function
 def run_prediction():
-    # Check if CUDA is available
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
     # Load the model
-    model_path = 'best_ms_classifier.pth'  # Path to your saved model
+    model_path = 'best_ms_classifier1.pth' 
     
-    # Initialize the model
     model = MSClassifier().to(device)
     
     # Load the trained weights
