@@ -26,7 +26,7 @@ class CNNModel(nn.Module):
         return x
 
 model = CNNModel()  
-model.load_state_dict(torch.load("best_model.pth"))
+model.load_state_dict(torch.load("best_ms_classifier.pth"))
 model.to(device)  
 model.eval()  
 
